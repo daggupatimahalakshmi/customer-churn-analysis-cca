@@ -1,3 +1,4 @@
+```python
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -7,15 +8,18 @@ import plotly.graph_objects as go
 from sklearn.cluster import KMeans
 
 # ------------------------------------------------
-# Page Config
+# PAGE CONFIG
 # ------------------------------------------------
 
-st.set_page_config(page_title="Customer Churn AI Dashboard", layout="wide")
+st.set_page_config(
+    page_title="Customer Churn Analysis and Retention Strategy Recommendation System",
+    layout="wide"
+)
 
-st.title("📊 Customer Churn Analysis & Retention AI System")
+st.title("📊 Customer Churn Analysis and Retention Strategy Recommendation System")
 
 # ------------------------------------------------
-# Load Model
+# LOAD MODEL FILES
 # ------------------------------------------------
 
 model = joblib.load("best_churn_model.pkl")
@@ -24,232 +28,220 @@ scaler = joblib.load("scaler.pkl")
 features = scaler.feature_names_in_
 
 # ------------------------------------------------
-# Upload Dataset
+# LOAD DATASET (FROM GITHUB REPO)
 # ------------------------------------------------
 
-uploaded_file = st.file_uploader("Upload Customer Dataset", type=["csv"])
+df = pd.read_csv("customer_data.csv")
 
-if uploaded_file:
+st.subheader("Customer Dataset Preview")
+st.dataframe(df.head())
 
-    df = pd.read_csv(uploaded_file)
+# ------------------------------------------------
+# CONVERT CATEGORICAL DATA
+# ------------------------------------------------
 
-    st.subheader("Dataset Preview")
-    st.dataframe(df.head())
+for col in df.columns:
+    if df[col].dtype == "object":
+        df[col] = pd.factorize(df[col])[0]
 
-    # ------------------------------------------------
-    # Convert categorical columns to numbers
-    # ------------------------------------------------
+# ------------------------------------------------
+# ALIGN DATA WITH MODEL FEATURES
+# ------------------------------------------------
 
-    for col in df.columns:
-        if df[col].dtype == "object":
-            df[col] = pd.factorize(df[col])[0]
+for col in features:
+    if col not in df.columns:
+        df[col] = 0
 
-    # ------------------------------------------------
-    # Add missing columns
-    # ------------------------------------------------
+X = df[features]
 
-    for col in features:
-        if col not in df.columns:
-            df[col] = 0
+# ------------------------------------------------
+# SCALE DATA
+# ------------------------------------------------
 
-    # keep only model features
-    X = df[features]
+X_scaled = scaler.transform(X)
 
-    # ------------------------------------------------
-    # Scale Data
-    # ------------------------------------------------
+# ------------------------------------------------
+# PREDICTIONS
+# ------------------------------------------------
 
-    X_scaled = scaler.transform(X)
+pred = model.predict(X_scaled)
+prob = model.predict_proba(X_scaled)
 
-    # ------------------------------------------------
-    # Predict
-    # ------------------------------------------------
+df["Churn Prediction"] = pred
+df["Churn Probability"] = prob[:,1] * 100
 
-    predictions = model.predict(X_scaled)
-    probabilities = model.predict_proba(X_scaled)
+# ------------------------------------------------
+# CUSTOMER LIFETIME VALUE
+# ------------------------------------------------
 
-    df["Churn Prediction"] = predictions
-    df["Churn Probability"] = probabilities[:,1] * 100
+if "MonthlyCharges" in df.columns and "tenure" in df.columns:
+    df["CLV"] = df["MonthlyCharges"] * df["tenure"] * (1 - prob[:,1])
+else:
+    df["CLV"] = 0
 
-    # ------------------------------------------------
-    # Customer Lifetime Value
-    # ------------------------------------------------
+# ------------------------------------------------
+# RETENTION STRATEGY FUNCTION
+# ------------------------------------------------
 
-    if "MonthlyCharges" in df.columns and "tenure" in df.columns:
-        df["CLV"] = df["MonthlyCharges"] * df["tenure"] * (1 - probabilities[:,1])
-    else:
-        df["CLV"] = 0
+def retention_strategy(row):
 
-    # ------------------------------------------------
-    # Retention Strategy Generator
-    # ------------------------------------------------
+    strategies = []
 
-    def retention_strategy(row):
+    if row["Churn Probability"] > 70:
+        strategies.append("Offer loyalty discount")
 
-        strategies=[]
+    if "tenure" in row and row["tenure"] < 12:
+        strategies.append("Provide onboarding support")
 
-        if row["Churn Probability"] > 70:
-            strategies.append("Offer loyalty discount")
+    if "MonthlyCharges" in row and row["MonthlyCharges"] > 80:
+        strategies.append("Suggest lower price plan")
 
-        if "tenure" in row and row["tenure"] < 12:
-            strategies.append("Provide onboarding support")
+    if len(strategies) == 0:
+        strategies.append("Maintain service quality")
 
-        if "MonthlyCharges" in row and row["MonthlyCharges"] > 80:
-            strategies.append("Offer cheaper plan")
+    return ", ".join(strategies)
 
-        if len(strategies)==0:
-            strategies.append("Maintain service quality")
+df["Retention Strategy"] = df.apply(retention_strategy, axis=1)
 
-        return ", ".join(strategies)
+# ------------------------------------------------
+# CUSTOMER SEGMENTATION
+# ------------------------------------------------
 
-    df["Retention Strategy"] = df.apply(retention_strategy, axis=1)
+kmeans = KMeans(n_clusters=3, random_state=42)
+df["Cluster"] = kmeans.fit_predict(X_scaled)
 
-    # ------------------------------------------------
-    # Customer Segmentation
-    # ------------------------------------------------
+# ------------------------------------------------
+# KPI METRICS
+# ------------------------------------------------
 
-    kmeans = KMeans(n_clusters=3, random_state=42)
-    df["Cluster"] = kmeans.fit_predict(X_scaled)
+churn_rate = df["Churn Prediction"].mean() * 100
+avg_clv = df["CLV"].mean()
 
-    # ------------------------------------------------
-    # Metrics
-    # ------------------------------------------------
+col1, col2, col3 = st.columns(3)
 
-    churn_rate = df["Churn Prediction"].mean() * 100
-    avg_clv = df["CLV"].mean()
+col1.metric("Total Customers", len(df))
+col2.metric("Churn Rate", f"{churn_rate:.2f}%")
+col3.metric("Average CLV", f"${avg_clv:.2f}")
 
-    col1,col2,col3 = st.columns(3)
+# ------------------------------------------------
+# CHURN RISK GAUGE
+# ------------------------------------------------
 
-    col1.metric("Total Customers", len(df))
-    col2.metric("Churn Rate", f"{churn_rate:.2f}%")
-    col3.metric("Average CLV", f"${avg_clv:.2f}")
+st.subheader("Overall Churn Risk")
 
-    # ------------------------------------------------
-    # Gauge Meter
-    # ------------------------------------------------
+fig = go.Figure(go.Indicator(
+    mode="gauge+number",
+    value=churn_rate,
+    title={'text': "Churn Risk Level"},
+    gauge={
+        'axis': {'range': [0,100]},
+        'steps':[
+            {'range':[0,40],'color':"green"},
+            {'range':[40,70],'color':"yellow"},
+            {'range':[70,100],'color':"red"}
+        ]
+    }
+))
 
-    st.subheader("Overall Churn Risk")
+st.plotly_chart(fig, use_container_width=True)
 
-    fig = go.Figure(go.Indicator(
-        mode="gauge+number",
-        value=churn_rate,
-        title={'text': "Churn Risk"},
-        gauge={
-            'axis': {'range':[0,100]},
-            'bar':{'color':"red"},
-            'steps':[
-                {'range':[0,40],'color':"green"},
-                {'range':[40,70],'color':"yellow"},
-                {'range':[70,100],'color':"red"}
-            ]
-        }
-    ))
+# ------------------------------------------------
+# TABS
+# ------------------------------------------------
 
-    st.plotly_chart(fig, use_container_width=True)
+tab1, tab2, tab3, tab4 = st.tabs([
+    "Executive Dashboard",
+    "Churn Predictions",
+    "Retention Strategies",
+    "Customer Segmentation"
+])
 
-    # ------------------------------------------------
-    # Tabs
-    # ------------------------------------------------
+# ------------------------------------------------
+# DASHBOARD
+# ------------------------------------------------
 
-    tab1,tab2,tab3,tab4 = st.tabs([
-        "📊 Executive Dashboard",
-        "🤖 Predictions",
-        "🎯 Retention Strategies",
-        "👥 Customer Segmentation"
-    ])
+with tab1:
 
-    # ------------------------------------------------
-    # Dashboard Charts
-    # ------------------------------------------------
+    st.subheader("Churn Distribution")
 
-    with tab1:
+    fig = px.pie(df, names="Churn Prediction")
+    st.plotly_chart(fig)
 
-        st.subheader("Churn Distribution")
+    if "MonthlyCharges" in df.columns:
 
-        fig = px.pie(df, names="Churn Prediction")
+        st.subheader("Monthly Charges vs Churn")
+
+        fig = px.box(df, x="Churn Prediction", y="MonthlyCharges")
         st.plotly_chart(fig)
 
-        if "MonthlyCharges" in df.columns:
+    if "tenure" in df.columns:
 
-            st.subheader("Monthly Charges vs Churn")
+        st.subheader("Tenure vs Churn")
 
-            fig = px.box(df, x="Churn Prediction", y="MonthlyCharges")
-            st.plotly_chart(fig)
+        fig = px.histogram(df, x="tenure", color="Churn Prediction")
+        st.plotly_chart(fig)
 
-        if "tenure" in df.columns:
+# ------------------------------------------------
+# PREDICTIONS TABLE
+# ------------------------------------------------
 
-            st.subheader("Tenure Distribution")
+with tab2:
 
-            fig = px.histogram(df, x="tenure", color="Churn Prediction")
-            st.plotly_chart(fig)
+    st.subheader("Customer Churn Predictions")
 
-    # ------------------------------------------------
-    # Prediction Table
-    # ------------------------------------------------
+    st.dataframe(df[
+        ["Churn Prediction","Churn Probability","CLV"]
+    ])
 
-    with tab2:
+# ------------------------------------------------
+# RETENTION STRATEGIES
+# ------------------------------------------------
 
-        st.subheader("Customer Predictions")
+with tab3:
 
-        st.dataframe(df[[
-            "Churn Prediction",
-            "Churn Probability",
-            "CLV"
-        ]])
+    st.subheader("Recommended Retention Strategies")
 
-    # ------------------------------------------------
-    # Retention Strategies
-    # ------------------------------------------------
+    st.dataframe(df[
+        ["Churn Probability","Retention Strategy"]
+    ])
 
-    with tab3:
+# ------------------------------------------------
+# SEGMENTATION
+# ------------------------------------------------
 
-        st.subheader("Retention Strategies")
+with tab4:
 
-        st.dataframe(df[[
-            "Churn Probability",
-            "Retention Strategy"
-        ]])
+    if "MonthlyCharges" in df.columns and "tenure" in df.columns:
 
-    # ------------------------------------------------
-    # Segmentation
-    # ------------------------------------------------
+        fig = px.scatter(
+            df,
+            x="MonthlyCharges",
+            y="tenure",
+            color="Cluster",
+            title="Customer Segments"
+        )
 
-    with tab4:
+        st.plotly_chart(fig)
 
-        if "MonthlyCharges" in df.columns and "tenure" in df.columns:
+# ------------------------------------------------
+# HIGH RISK CUSTOMERS
+# ------------------------------------------------
 
-            fig = px.scatter(
-                df,
-                x="MonthlyCharges",
-                y="tenure",
-                color="Cluster",
-                title="Customer Segments"
-            )
+st.subheader("High Risk Customers")
 
-            st.plotly_chart(fig)
+high_risk = df[df["Churn Probability"] > 70]
 
-    # ------------------------------------------------
-    # High Risk Customers
-    # ------------------------------------------------
+st.dataframe(high_risk)
 
-    st.subheader("🔴 High Risk Customers")
+# ------------------------------------------------
+# DOWNLOAD RESULTS
+# ------------------------------------------------
 
-    high_risk = df[df["Churn Probability"] > 70]
+csv = df.to_csv(index=False)
 
-    st.dataframe(high_risk)
-
-    # ------------------------------------------------
-    # Download Results
-    # ------------------------------------------------
-
-    csv = df.to_csv(index=False)
-
-    st.download_button(
-        label="Download Prediction Results",
-        data=csv,
-        file_name="churn_predictions.csv"
-    )
-
-else:
-
-    st.info("Upload a dataset to start analysis.")
+st.download_button(
+    label="Download Prediction Results",
+    data=csv,
+    file_name="churn_predictions.csv"
+)
+```
